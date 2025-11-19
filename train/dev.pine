@@ -1,0 +1,298 @@
+//@version=5
+// @strategy_alert_message {{strategy.order.alert_message}}
+
+strategy(title = 'btc-long-bot',
+         shorttitle = 'btc-long-bot',
+         overlay = true,
+         default_qty_type = strategy.cash,
+         default_qty_value = 10,
+         pyramiding = 1000,
+         currency = currency.USD,
+         initial_capital = 100000,
+         max_lines_count = 150,
+         max_labels_count = 150,
+         commission_type = strategy.commission.percent,
+         commission_value = 0.1,
+         backtest_fill_limits_assumption = 0,
+         slippage = 3,
+         calc_on_order_fills = false,
+         calc_on_every_tick = false,
+         use_bar_magnifier = true,
+         fill_orders_on_standard_ohlc = true,
+         dynamic_requests = true
+         )
+singleTestCondition          = input.string(defval = "22", title = "Single Test Condition", inline = 'Single Test', group = "Single Test")
+compoundVolume      = input.bool(defval = true, title = "Use compound volume ($)", inline = 'Webhook', group = "Strategy_size")
+leverage            = input.float(defval = 5.5, minval=1, step=1, maxval=50, title = "Leverage", inline = 'Webhook', group = "Strategy_size")
+initSizeByEquityInput    = input.float(defval = 20, title = "Init Size Equity (%)", inline = 'Size', group = "Strategy_size") / 100
+stepSizePercentInput     = input.float(defval = 15, title = "Size Increase (%)", inline = 'Size', group = "Strategy_size") / 100
+maxDCAOrdersInput        = input.float(defval = 4, title = "Max orders (order)", inline = 'Size', group = "Strategy_size")
+initUnderPercentDCA     = input.float(defval = 0, title = "Init percent to DCA (%)", inline = 'Size ATR', group = "Strategy_DCA") / 100
+stepDecreasePercentDCA  = input.float(defval = 0, minval=0, maxval=100, title = "Increase step percent to DCA (%)", inline = 'Size ATR', group = "Strategy_DCA") / 100
+decreaseDCAWithATR      = input.float(defval = 2, title = "Decrease DCA with ATR (Multiple)", inline = 'Size ATR', minval = 0, step = 0.05, group = "Strategy_DCA")
+delayBarPerOrder    = input.int(title = "Delay bar / order", defval = 40, minval = 0, inline = 'Open', group = "Strategy_Delay")
+barToTurnOnSafeMode = input.int(title = "Bar to active safe mode", defval = 800, minval = 0, inline = 'Open', group = "Strategy_Delay")
+atrMultiplierTP = input.float(defval = 4.5, title = "ATR Multiplier TP", inline = 'ATR', minval = 0, step = 0.05, group = "Strategy_TPSL")
+initTP          = input.float(defval = 0, title = "Init TP (%)", inline = 'Take Profit', group = "Strategy_TPSL") / 100
+initMinTP          = input.float(defval = 1.5, title = "Init TP (%)", inline = 'Take Profit', group = "Strategy_TPSL") / 100
+initMaxTP          = input.float(defval = 10, title = "Init TP (%)", inline = 'Take Profit', group = "Strategy_TPSL") / 100
+atrMultiplierSL = input.float(defval = 0, title = "ATR Multiplier SL", inline = 'ATR', minval = 0, step = 0.05, group = "Strategy_TPSL")
+initSL          = input.float(defval = 0, minval = 0, title = "Init SL (%)", inline = 'Take Profit', group = "Strategy_TPSL") / 100
+okxSignalKeyInput = input.text_area(defval = '8i8vmnl3sb2vLC15UebA1ynx9Accyj/7oRak5L3bU6cgA4ZUgcAwbqkStMiO2m4sNyxCRTQD7yFV+CN3D34NFw==', title = "OKX Key", group = "Strategy_OKX")
+
+
+var string T30m = "30"
+var string T60m = "60"
+var string T3H = "180"
+var string T4H = "240"
+var string T5H = "300"
+var string T1D = "1D"
+
+bool isrealtime = barstate.isrealtime
+[dmi1, dmi2, dmi3] = ta.dmi(13, 70)
+[dmi1_, dmi2_, dmi3_] = ta.dmi(50, 20)
+
+[_kcUpper, _kcBasis, _kcLower] = ta.kc(close, 20, 0.95)
+[_kcUpper_50_2, _kcBasis_50_2, _kcLower_50_2] = ta.kc(close, 50, 1.5)
+[_kcUpper_14_high_2, _kcBasis_14_high_2, _kcLower_14_high_2] = ta.kc(high, 14, 1.5)
+[_kcUpper_70_high_3, _kcBasis_70_high_3, _kcLower_70_high_3] = ta.kc(high, 70, 3)
+
+
+var offset = 1
+var lookahead_type = barmerge.lookahead_on
+var tickerid = "INDEX:ETHUSD"
+var instrument = "ETHUSDT.P"
+_stochK14 = ta.stoch(close, high, low, 14)
+[_macdLine, _macdSignal, _macdHist] = ta.macd(close, 12, 26, 9)
+[_bbUpper20_2, _bbBasis20_2, _bbLower20_2] = ta.bb(low, 50, 2)
+[_supertrend, _superTrendDirection] = ta.supertrend(40, 200)
+almaShort = ta.alma(close, 20, 0.85, 6)
+almaLong  = ta.alma(close, 200, 0.85, 6)
+[dmi1__, dmi2__, dmi3__] = ta.dmi(100, 40)
+[kc1, kc2, kc3] = ta.kc(high, 70, 3)
+
+
+// Current timeframe
+[rsi10_current, diplus_50_current, diminus_50_current, diplus_13_current, diminus_13_current, open_current, close_current, high_current, low_current, volume_current, kcUpper_current, kcBasis_current, kcLower_current] = request.security(tickerid, timeframe.period, [ta.rsi(high, 10)[offset], dmi1_[offset], dmi2_[offset], dmi1[offset], dmi2[offset], open[offset], close[offset], high[offset], low[offset], volume[offset], _kcUpper[offset], _kcBasis[offset], _kcLower[offset]], lookahead = lookahead_type)
+
+// 30-minute timeframe
+[atr_300_30M, kcUpper_70_3_30M, kcBasis_70_3_30M, kcLower_70_3_30M ,tsi300_30M,diplus_100_30M,diminus_100_30M,adx_40_30M,cci_14_30M,cci_80_30M,cci_300_30M,alma_21_30M,ema_50_30M,ema_200_30M,ema_volume_50_30M,mfi14_30M,stochK14_30M,roc14_30M,macd_30M,macdSignal_30M,macdHist_30M,bbUpper20_2_30M,bbBasis20_2_30M,bbLower20_2_30M,cci20_30M,supertrend_30M,superTrendDirection_30M,kcUpper_70_high_3_30M,kcBasis_70_high_3_30M,kcLower_70_high_3_30M,diplus_50_30M,diminus_50_30M,adx_20_30M,sma_20_30M,sma_80_30M,kcUpper_14_high_2_30M,kcBasis_14_high_2_30M,kcLower_14_high_2_30M,diplus_13_30M,diminus_13_30M,adx_70_30M,rsi50_close_30M,atr1_30M,atr14_30M,atr50_30M,rsi10_30M,rsi50_30M,rsi14_30M,open_30M,high_30M,close_30M,low_30M,atr6_30M,rsi60_30M,rsi300_30M,ema9_30M,ema21_30M,ema30_30M,ema80_30M,volume_30M,kcUpper_30M,kcBasis_30M,kcLower_30M,kcUpper_50_2_30M,kcBasis_50_2_30M,kcLower_50_2_30M,tsi14_30M,tsi50_30M] = request.security(tickerid,T30m,[ta.atr(300)[offset],kc1[offset], kc2[offset], kc3[offset], ta.tsi(close,50,100)[offset],dmi1__[offset],dmi2__[offset],dmi3__[offset],ta.cci(close,14)[offset],ta.cci(close,80)[offset],ta.cci(close,300)[offset],ta.alma(close,20,0.1,50)[offset],ta.ema(close,50)[offset],ta.ema(close,200)[offset],ta.ema(volume,50)[offset],ta.mfi(high,100)[offset],_stochK14[offset],ta.roc(close,14)[offset],_macdLine[offset],_macdSignal[offset],_macdHist[offset],_bbUpper20_2[offset],_bbBasis20_2[offset],_bbLower20_2[offset],ta.cci(close,20)[offset],_supertrend[offset],_superTrendDirection[offset],_kcUpper_70_high_3[offset],_kcBasis_70_high_3[offset],_kcLower_70_high_3[offset],dmi1_[offset],dmi2_[offset],dmi3_[offset],ta.sma(low,20)[offset],ta.sma(low,80)[offset],_kcUpper_14_high_2[offset],_kcBasis_14_high_2[offset],_kcLower_14_high_2[offset],dmi1[offset],dmi2[offset],dmi3[offset],ta.rsi(close,50)[offset],ta.atr(1)[offset],ta.atr(14)[offset],ta.atr(50)[offset],ta.rsi(high,10)[offset],ta.rsi(high,50)[offset],ta.rsi(high,14)[offset],open[offset],high[offset],close[offset],low[offset],ta.atr(6)[offset],ta.rsi(high,60)[offset],ta.rsi(high,300)[offset],ta.ema(close,9)[offset],ta.ema(close,21)[offset],ta.ema(close,30)[offset],ta.ema(close,80)[offset],volume[offset],_kcUpper[offset],_kcBasis[offset],_kcLower[offset],_kcUpper_50_2[offset],_kcBasis_50_2[offset],_kcLower_50_2[offset],ta.tsi(high,14,14)[offset],ta.tsi(high,50,50)[offset]],lookahead=lookahead_type)
+
+// 1-hour timeframe
+[atr14_1H, low_1H, diplus_50_1H, diminus_50_1H, adx_20_1H, open_1H, close_1H, high_1H, atr1_1H, atr50_1H, rsi10_1H, rsi14_1H, rsi50_1H, ma30_1H, ma80_1H, ema9_1H, ema21_1H, ema30_1H, ema80_1H, kcUpper_1H, kcBasis_1H, kcLower_1H, kcUpper_50_2_1H, kcBasis_50_2_1H, kcLower_50_2_1H, tsi14_1H, tsi50_1H] = request.security(tickerid, T60m, [ta.atr(14)[offset], low[offset], dmi1_[offset], dmi2_[offset], dmi3_[offset], open[offset], close[offset], high[offset], ta.atr(1)[offset], ta.atr(50)[offset], ta.rsi(high, 10)[offset], ta.rsi(high, 14)[offset], ta.rsi(high, 50)[offset], ta.sma(close, 30)[offset], ta.sma(close, 80)[offset], ta.ema(close, 9)[offset], ta.ema(close, 21)[offset], ta.ema(close, 30)[offset], ta.ema(close, 80)[offset], _kcUpper[offset], _kcBasis[offset], _kcLower[offset], _kcUpper_50_2[offset], _kcBasis_50_2[offset], _kcLower_50_2[offset], ta.tsi(high, 14, 14)[offset], ta.tsi(high, 50, 50)[offset]], lookahead = lookahead_type)
+
+// 3-hour timeframe
+[diplus_100_3H, diminus_100_3H, adx_40_3H, sma_20_3H, sma_80_3H, diplus_50_3H, diminus_50_3H, adx_20_3H, rsi14_3H, rsi10_3H, rsi50_3H, atr1_3H, atr50_3H, atr14_3H, open_3H, close_3H, low_3H, high_3H] = request.security(tickerid, T3H, [dmi1__[offset], dmi2__[offset], dmi3__[offset],ta.sma(low, 20)[offset], ta.sma(low, 80)[offset], dmi1_[offset], dmi2_[offset], dmi3_[offset], ta.rsi(high, 14)[offset], ta.rsi(high, 10)[offset], ta.rsi(high, 50)[offset], ta.atr(1)[offset], ta.atr(50)[offset], ta.atr(14)[offset], open[offset], close[offset], low[offset], high[offset]], lookahead = lookahead_type)
+
+// 4-hour timeframe
+[kcUpper_70_3_4H, kcBasis_70_3_4H, kcLower_70_3_4H ,rsi50_close_4H, atr1_4H, atr14_4H, atr50_4H, rsi10_4H, rsi50_4H, rsi14_4H, open_4H, high_4H, close_4H, low_4H, atr6_4H, rsi60_4H, rsi300_4H, vwma_line_9, vwma_line_21, kcUpper_4H, kcBasis_4H, kcLower_4H, tsi14_4H, tsi50_4H] = request.security(tickerid, T4H, [kc1[offset], kc2[offset], kc3[offset], ta.rsi(close, 50)[offset], ta.atr(1)[offset], ta.atr(14)[offset], ta.atr(50)[offset], ta.rsi(high, 10)[offset], ta.rsi(high, 50)[offset], ta.rsi(high, 14)[offset], open[offset], high[offset], close[offset], low[offset], ta.atr(6)[offset], ta.rsi(high, 60)[offset], ta.rsi(high, 300)[offset], ta.vwma(close, 9)[offset], ta.vwma(close, 21)[offset], _kcUpper[offset], _kcBasis[offset], _kcLower[offset], ta.tsi(high, 14, 14)[offset], ta.tsi(high, 50, 50)[offset]], lookahead = lookahead_type)
+
+// 5-hour timeframe
+[atr50_5H, low_5H, open_5H, close_5H, high_5H, atr5_5H, atr1_5H, rsi10_5H, rsi14_5H, rsi50_5H, kcUpper_5H, kcBasis_5H, kcLower_5H, tsi21_5H, tsi14_5H, tsi50_5H] = request.security(tickerid, T5H, [ta.atr(50)[offset], low[offset], open[offset], close[offset], high[offset], ta.atr(5)[offset], ta.atr(1)[offset], ta.rsi(high, 10)[offset], ta.rsi(high, 14)[offset], ta.rsi(high, 50)[offset], _kcUpper[offset], _kcBasis[offset], _kcLower[offset], ta.tsi(high, 21, 21)[offset], ta.tsi(high, 14, 14)[offset], ta.tsi(high, 50, 50)[offset]], lookahead = lookahead_type)
+
+// 1-day timeframe
+[diplus_50_1D, diminus_50_1D, adx_20_1D, rsi50_close_1D, atr1_1D, atr14_1D, atr50_1D, r, rsi50_1D, rsi14_1D, open_1D, high_1D, close_1D, low_1D, atr6_1D, rsi60_1D, rsi300_1D] = request.security(tickerid, T1D, [dmi1_[offset], dmi2_[offset], dmi3_[offset],ta.rsi(close, 50)[offset], ta.atr(1)[offset], ta.atr(14)[offset], ta.atr(50)[offset], ta.rsi(high, 10)[offset], ta.rsi(high, 50)[offset], ta.rsi(high, 14)[offset], open[offset], high[offset], close[offset], low[offset], ta.atr(6)[offset], ta.rsi(high, 60)[offset], ta.rsi(high, 300)[offset]], lookahead = lookahead_type)
+
+
+BTCDOM = request.security("CRYPTOCAP:BTC.D", "360",close[1], lookahead = lookahead_type)
+USDTDOM = request.security("CRYPTOCAP:USDT.D", "360",close[1], lookahead = lookahead_type)
+use_lower_volume_mode() => 
+    bool lowerMode1 = BTCDOM > 70
+    bool lowerMode3 = USDTDOM < 1.5
+    bool lowerMode4 = BTCDOM / USDTDOM > 70
+    bool lowerMode2 = na(USDTDOM) or na(USDTDOM)
+    lowerMode1 or lowerMode3 or lowerMode2 or lowerMode4 
+
+varip float initSizeByEquity    = initSizeByEquityInput
+varip float stepSizePercent     = stepSizePercentInput
+varip float maxDCAOrders        = maxDCAOrdersInput
+varip float longTakeProfitPrice = na
+varip float entryLimitPrice = na
+varip float longStopLossPrice   = na
+varip int  lastBarIndexOrder   = na
+varip float currentUnderPercentDCA = initUnderPercentDCA
+varip float currentSizeEquity      = initSizeByEquity
+varip float currentBalance         = strategy.initial_capital
+varip float currentAtrMultiplierTP = atrMultiplierTP
+varip float preOrderEntry          = na
+varip float currentDelayBarPerOrder = delayBarPerOrder
+varip bool isHaveLimitOrder = false
+varip bool positionWithLimitOrder = false
+varip bool lowerVolumMode = false
+varip float avaliableEquity = 1
+varip float prePositionAvgPrice = na
+var float maxEquity = strategy.equity
+var float posMDD = 0
+if strategy.opentrades == 0
+    maxEquity := math.max(strategy.equity, maxEquity) 
+// [sma_20_30M, sma_80_30M] = request.security(tickerid, T30m, [], lookahead = lookahead_type)
+// [sma_20_3H, sma_20_3H] = request.security(tickerid, T3H, [ta.sma(low, 20)[offset], ta.sma(low, 80)[offset]], lookahead = lookahead_type)
+// plot(rma1, "ditme", color = color.red,linewidth = 1, style = plot.style_linebr)
+// plot(rma2, "ditme2", color = color.aqua,linewidth = 1, style = plot.style_linebr)
+// === CONDITIONS OPEN LONG (renumbered 1 → 24)
+
+bool openLong1 = atr1_30M / atr1_30M[1] > 20  
+                 and open_30M > close_30M
+
+bool openLong2 = ta.crossover(sma_20_30M, sma_80_30M) 
+                 and atr1_30M >= atr50_30M * 2.5 
+                 and diplus_13_30M >= diminus_13_30M * 2.5
+
+bool dcaLongPosition1 = (ta.crossunder(rsi10_30M, 12) or ta.crossunder(rsi14_30M, 12) or ta.crossunder(rsi50_30M, 25))
+bool dcaLongPosition2 = strategy.opentrades == 1 and (strategy.position_avg_price - close_current >= atr50_30M * 12)
+
+string condText = " "
+varip string oldCondText = " "
+if openLong1
+    condText += "1 "
+if openLong2
+    condText += "2 "
+
+if(strategy.opentrades > 0)
+    if dcaLongPosition1 
+        condText += "dca1 "
+    if dcaLongPosition2 
+        condText += "dca2 "
+
+if condText != oldCondText and condText != " " 
+    label.new(bar_index, high * 1.005, condText, style=label.style_text_outline, color=color.black, textcolor=color.white, size=size.normal)
+    string singleAlertMsg = "Alert Single" + " | " + condText 
+    alert(singleAlertMsg)
+oldCondText := condText
+float dcaPrice = if (decreaseDCAWithATR != 0)
+    (strategy.position_avg_price - (atr50_30M * decreaseDCAWithATR))
+else
+    (strategy.position_avg_price * (1 - currentUnderPercentDCA))
+bool tradeCondition1 = strategy.opentrades < maxDCAOrders 
+bool tradeCondition2 = strategy.opentrades.size(strategy.opentrades - 1) == 0 or close_current <= dcaPrice
+bool tradeCondition3 = na(lastBarIndexOrder) or (bar_index - lastBarIndexOrder > currentDelayBarPerOrder)
+
+bool isUseSingleTest = singleTestCondition != "" 
+bool singleCondition = str.contains(condText, " " + singleTestCondition + " ") or str.contains(condText, "dca")
+if singleCondition and isUseSingleTest
+    condText := str.contains(condText, "dca") ? condText : " " + singleTestCondition + " "
+
+bool openLongPosition      = condText != " "
+bool tradeCondition        = tradeCondition1 and tradeCondition2 and tradeCondition3 and (isUseSingleTest ? singleCondition : true)
+bool longIsActive = (openLongPosition and tradeCondition) or (strategy.opentrades > 0 and strategy.position_size > 0)
+if (compoundVolume)
+    currentBalance := strategy.initial_capital + strategy.netprofit
+
+longTakeProfitPrice := if (atrMultiplierTP != 0)
+    if (longIsActive)
+        math.min(math.max(strategy.position_avg_price + (atr50_30M * currentAtrMultiplierTP), strategy.position_avg_price * (1 + initMinTP)), strategy.position_avg_price * (1 + initMaxTP))
+    else 
+        na
+else
+    strategy.position_avg_price * (1 + initTP)
+if openLongPosition and tradeCondition
+    lastBarIndexOrder := bar_index
+    if use_lower_volume_mode() and strategy.opentrades == 0 and not positionWithLimitOrder
+        lowerVolumMode := true
+        initSizeByEquity := 0.01
+        currentSizeEquity := initSizeByEquity
+        stepSizePercent := 0.05
+        maxDCAOrders := 36
+
+    currentDelayBarPerOrder := delayBarPerOrder
+
+
+    float limitEntry = na
+    if condText == " 1 "  // old 22 → new 15 (1D conditions)
+        currentDelayBarPerOrder := 105
+        limitEntry := close_30M - 5 * atr50_30M
+
+    if openLong4 or openLong6
+        currentAtrMultiplierTP := 4
+    else
+        currentAtrMultiplierTP := atrMultiplierTP
+    if not na(limitEntry)
+        entryLimitPrice := limitEntry
+    else
+        entryLimitPrice := na
+
+    if(lowerVolumMode == false)
+        if(positionWithLimitOrder or (strategy.opentrades == 0 and na(limitEntry) == false))
+            if(strategy.opentrades == 0)
+                currentSizeEquity := 0.2
+            if(strategy.opentrades == 1)
+                currentSizeEquity := 0.15
+            if(strategy.opentrades == 2)
+                currentSizeEquity := 0.25
+            if(strategy.opentrades == 3)
+                currentSizeEquity := 0.4
+        else
+            if(strategy.opentrades == 0)
+                currentSizeEquity := 0.2
+            if(strategy.opentrades == 1)
+                currentSizeEquity := 0.15
+            if(strategy.opentrades == 2)
+                currentSizeEquity := 0.4
+            if(strategy.opentrades == 3)
+                currentSizeEquity := 0.03  
+    float maxSizeLimit = math.min(((currentSizeEquity * currentBalance) / close_current) * leverage, 1000000000000.000000)
+    string message = condText + " | " + (na(limitEntry) ?  "" : str.tostring(math.round(limitEntry,3))) + " | " + str.tostring(currentSizeEquity)
+    string openAlertMessage = '{"action": "ENTER_LONG", "marketPosition": "{{strategymarket_position}}", "prevMarketPosition": "{{strategy.prev_market_position}}", "marketPositionSize": "{{strategy.market_position_size}}", "prevMarketPositionSize": "{{strategy.prev_market_position_size}}", "instrument": "' + instrument + '", "signalToken": "' + okxSignalKeyInput + '", "timestamp": "{{timenow}}", "maxLag": "300", "orderType": "' + 'market' + '", "investmentType": "percentage_investment", "amount": "' + str.tostring((currentSizeEquity * 100)) + '"}'
+    alert(message)
+    strategy.entry(id = 'Long Entry', qty = maxSizeLimit, comment = message, limit = limitEntry, alert_message = openAlertMessage, oca_name = 'Long Entry OCA', direction = strategy.long)
+    currentUnderPercentDCA := currentUnderPercentDCA * (1 + stepDecreasePercentDCA)
+    currentSizeEquity      := currentSizeEquity * (1 + stepSizePercent)
+    if not na(limitEntry)
+        isHaveLimitOrder := true
+        if strategy.opentrades == 0
+            positionWithLimitOrder := true
+
+bool lastOpenOrderCon = strategy.opentrades == maxDCAOrders
+if (lastOpenOrderCon)
+    currentAtrMultiplierTP := 10
+
+bool safeModeMainCon = bar_index - lastBarIndexOrder > barToTurnOnSafeMode
+if (lastOpenOrderCon and safeModeMainCon)
+    longTakeProfitPrice := strategy.position_avg_price + atr50_30M * atrMultiplierTP
+
+if(longIsActive and not na(longTakeProfitPrice))
+    string exitAlertMessage = '{"action": "EXIT_LONG", "marketPosition": "{{strategy.market_position}}", "prevMarketPosition": "{{strategy.prev_market_position}}", "marketPositionSize": "{{strategy.market_position_size}}", "prevMarketPositionSize": "{{strategy.prev_market_position_size}}", "instrument": "{{ticker}}", "signalToken": "' + okxSignalKeyInput + '", "timestamp": "{{timenow}}", "maxLag": "300", "orderType": "market", "investmentType": "percentage_position", "amount": "100"}'
+    strategy.order(id = 'Long Take Profit', comment = str.tostring(posMDD), qty = strategy.position_size, direction = strategy.short, oca_name = 'Long Entry OCA', oca_type = strategy.oca.cancel, alert_message = exitAlertMessage, limit = longTakeProfitPrice)
+
+bool firstLimitOrderTriggerCon = strategy.opentrades == 0 and isHaveLimitOrder == true and not na(strategy.position_avg_price)
+bool limitOrderTriggerCon = strategy.opentrades > 0 and low_current <= entryLimitPrice
+if (firstLimitOrderTriggerCon or limitOrderTriggerCon)
+    isHaveLimitOrder := false
+    entryLimitPrice  := na
+
+
+bool cancelLimitOrder1 = isHaveLimitOrder and positionWithLimitOrder and na(strategy.position_avg_price) and bar_index - lastBarIndexOrder > 500
+bool cancelLimitOrder2 = not na(prePositionAvgPrice) and na(strategy.position_avg_price)
+if cancelLimitOrder1 or cancelLimitOrder2
+    strategy.cancel("Long Entry")
+    isHaveLimitOrder := false
+    positionWithLimitOrder := false
+
+if(isHaveLimitOrder and positionWithLimitOrder and na(strategy.position_avg_price) and bar_index - lastBarIndexOrder > 500)
+    strategy.cancel("Long Entry")
+    isHaveLimitOrder := false
+    positionWithLimitOrder := false
+if (strategy.opentrades == 0 and isHaveLimitOrder == false and strategy.position_size == 0 and longIsActive == false)
+    lowerVolumMode := false
+    initSizeByEquity := initSizeByEquityInput
+    stepSizePercent := stepSizePercentInput
+    maxDCAOrders := maxDCAOrdersInput
+    currentDelayBarPerOrder := delayBarPerOrder
+    entryLimitPrice        := na
+    preOrderEntry          := na
+    currentSizeEquity      := initSizeByEquity
+    currentAtrMultiplierTP := atrMultiplierTP
+    currentUnderPercentDCA := initUnderPercentDCA
+    posMDD := 0
+    positionWithLimitOrder := false
+    avaliableEquity := 1
+    strategy.cancel("Long Entry")
+prePositionAvgPrice := strategy.position_avg_price
+if strategy.opentrades > 0
+    posDD = maxEquity - currentBalance + strategy.position_size * (strategy.position_avg_price - low)
+    if posDD >= 0
+        posMDD := math.max(posMDD, 1 - (maxEquity - posDD) / maxEquity * 1)
+bgcolor(barstate.isrealtime ? color.rgb(149, 124, 166) : na)
+plot(series = longTakeProfitPrice, title = "Take Profit Price", color = color.rgb(0, 255, 94), linewidth = 1, style = plot.style_linebr)
+plot(series = strategy.position_avg_price, title = "positon", color = color.rgb(255, 255, 255), linewidth = 1, style = plot.style_linebr)
+plot(series = entryLimitPrice, title = "limit", color = color.rgb(132, 132, 132), linewidth = 1, style = plot.style_linebr)
