@@ -13,7 +13,6 @@ env.bak/
 venv.bak/
 
 # Project specific
-config.py
 temp/
 chrome_data/
 chorme_data/
