@@ -3,7 +3,7 @@
 Automates TradingView strategy backtests, parses exported data, analyzes performance, iteratively optimizes strategy code via LMM/embeddings, and produces human‑readable & structured reports.
 
 ---
-## ✨ Key Features
+## Key Features
 - **Automated TradingView control** (login, script injection, date range, strategy tester) via Playwright in `automation/tradingview_bot.py`.
 - **Parallel multi‑process optimization**: spins up multiple Chromium pages (`PROCESS_COUNT`) running independent optimization loops.
 - **Adaptive optimization loop** (`optimise.py`): generates revised Pine Script using embeddings (`train/embedding.py`) until target criteria are met.
@@ -15,7 +15,7 @@ Automates TradingView strategy backtests, parses exported data, analyzes perform
 - **Live progress display** using `utils/process_logger.py`.
 
 ---
-## 📁 Project Structure (Core)
+## Project Structure (Core)
 ```
 config.py                 # Global runtime configuration
 m.py                      # Unified CLI entrypoint (evaluate / optimize)
@@ -47,7 +47,7 @@ data/
 A historical duplicate lives under `tdv-tool/`; prefer root-level files.
 
 ---
-## 🧰 Requirements
+## Requirements
 - Python 3.10+
 - Chromium (installed by Playwright)
 - Dependencies in `requirements.txt`
@@ -65,7 +65,7 @@ playwright install --with-deps chromium
 ```
 
 ---
-## ⚙️ Configuration (`config.py`)
+## Configuration (`config.py`)
 Key fields (names may vary; adjust to match your file):
 - `TRADINGVIEW_USER`, `TRADINGVIEW_PASS`, `TRADINGVIEW_2FA_SECRET`
 - `ASSET_NAME`, `TIME_BACKTEST`
@@ -79,7 +79,7 @@ Key fields (names may vary; adjust to match your file):
 Runtime overrides are exposed in `m.py` CLI flags.
 
 ---
-## 🚀 Usage
+## Usage
 The primary interface is `m.py`.
 
 ### 1. Evaluate (Download + Analyze + Export)
@@ -121,7 +121,7 @@ Internally calls `optimise.run_strategy_agent()` which:
 - `--tool NAME` (embedding / model tool chain)
 
 ---
-## 🧪 Embedding & LMM Loop
+## Embedding & LMM Loop
 File: `train/embedding.py`
 - Consumes previous run metrics: net profit %, max drawdown %, total trades, percent profitable.
 - Builds prompt + context from last assistant output (`assitent_comment_before`).
@@ -131,7 +131,7 @@ File: `train/embedding.py`
 Extend by adding model routing logic for `auto` and integrating additional evaluation heuristics.
 
 ---
-## 📤 Outputs
+## Outputs
 Location summary:
 - Raw XLSX: `data/sheets/`
 - Reports: `data/reports/<strategy>_<timestamp>.txt|.xlsx`
@@ -141,11 +141,11 @@ Location summary:
 Each run merges new metrics into the existing cache (see `ReportExporter._merge_with_cache`).
 
 ---
-## 🔄 Git & Automation
+## Git & Automation
 `utils/github_utils.auto_commit_and_push()` can auto-commit changes (e.g., updated Pine scripts, cache snapshots). Ensure you have git remotes configured & auth ready.
 
 ---
-## 🩺 Troubleshooting
+## Troubleshooting
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
 | Login hangs | Bad credentials / 2FA | Recheck `config.py` values |
@@ -155,7 +155,7 @@ Each run merges new metrics into the existing cache (see `ReportExporter._merge_
 | Playwright errors about browser | Missing install | Run `playwright install chromium` |
 
 ---
-## 🔧 Extending
+## Extending
 Ideas:
 - Add unit tests for analyzer & exporter logic in `test/`.
 - Implement advanced selection for `model="auto"` (latency/quality scoring).
@@ -164,11 +164,11 @@ Ideas:
 - Persist run timeline (iterations) as a time series CSV.
 
 ---
-## 🛡️ Safety & Rate Limits
+## Safety & Rate Limits
 Automating TradingView may be subject to ToS; ensure compliance. Space out iterations (`slow_mo`, sleeps) to reduce flagging risk.
 
 ---
-## ✅ Quick Start Recap
+## Quick Start Recap
 ```bash
 # 1. Setup
 python3 -m venv .venv && source .venv/bin/activate
@@ -186,11 +186,11 @@ python m.py optimize --strategy btc-long --conditions "1" --max-iterations 30
 ```
 
 ---
-## 📄 License
+## License
 Add a LICENSE file (MIT recommended) if you intend to distribute.
 
 ---
-## 🙌 Contributing
+## Contributing
 PRs welcome: please include concise descriptions, keep functions small, and add/adjust docs when behavior changes.
 
 ---
